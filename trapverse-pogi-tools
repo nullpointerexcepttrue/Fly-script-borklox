@@ -1,0 +1,1440 @@
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║   TRAPVERSE TOOLS SCRIPTING PLS DONT ABUSE NIGGA HEHEHEHE   ║
+-- ║   LocalScript — StarterPlayerScripts                        ║
+-- ║   Features: Fly · Walk · Noclip · Inf-Jump · Tags           ║
+-- ║             Click-TP · Search Player · Animation Packs      ║
+-- ║             RESPAWN                                         ║
+-- ╚══════════════════════════════════════════════════════════════╝
+
+-- ══════════════════════════════════════════════════════════════════
+--  SERVICES
+-- ══════════════════════════════════════════════════════════════════
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local TweenService     = game:GetService("TweenService")
+
+-- ══════════════════════════════════════════════════════════════════
+--  LOCAL PLAYER SETUP
+-- ══════════════════════════════════════════════════════════════════
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local mouse     = player:GetMouse()
+local camera    = workspace.CurrentCamera
+
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+local rootPart  = character:WaitForChild("HumanoidRootPart")
+
+player.CharacterAdded:Connect(function(char)
+	character = char
+	humanoid  = char:WaitForChild("Humanoid")
+	rootPart  = char:WaitForChild("HumanoidRootPart")
+end)
+
+local function updateCharacterReferences()
+	if not character or not character.Parent then
+		character = player.Character or player.CharacterAdded:Wait()
+	end
+	if not humanoid or not humanoid.Parent then
+		humanoid = character:WaitForChild("Humanoid")
+	end
+	if not rootPart or not rootPart.Parent then
+		rootPart = character:WaitForChild("HumanoidRootPart")
+	end
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  STATE
+-- ══════════════════════════════════════════════════════════════════
+local flying             = false
+local flySpeed           = 50
+local bodyVelocity, bodyGyro, flyConnection
+
+local tagsEnabled        = false
+local showDistance       = true
+local trackedTags        = {}
+
+local infiniteJumpEnabled = false
+local noclipEnabled       = false
+local walkEnabled         = false
+
+local clickTpEnabled     = false
+local clickTpConnection  = nil
+
+local jumpPower          = 50
+local runSpeed           = 16
+
+local WALK_PRESETS = {
+	{ label = "Slow",   speed = 6  },
+	{ label = "Normal", speed = 16 },
+	{ label = "Fast",   speed = 32 },
+}
+local currentWalkPreset = 2
+
+local keys = { W=false, A=false, S=false, D=false, Space=false, Shift=false }
+
+-- ══════════════════════════════════════════════════════════════════
+--  PALETTE  (deep black / near-black theme)
+-- ══════════════════════════════════════════════════════════════════
+local C = {
+	-- Blacks
+	Void        = Color3.fromRGB(0,   0,   0),
+	Abyss       = Color3.fromRGB(6,   6,   8),
+	Obsidian    = Color3.fromRGB(10,  10,  13),
+	Charcoal    = Color3.fromRGB(15,  15,  18),
+	Slate       = Color3.fromRGB(20,  20,  24),
+	SlateHover  = Color3.fromRGB(26,  26,  32),
+	-- Gold accents
+	Gold        = Color3.fromRGB(200, 162,  90),
+	GoldBright  = Color3.fromRGB(235, 198, 130),
+	GoldDim     = Color3.fromRGB( 45,  36,  12),
+	GoldLine    = Color3.fromRGB( 60,  48,  16),
+	-- Text
+	Ivory       = Color3.fromRGB(245, 242, 235),
+	Champagne   = Color3.fromRGB(170, 162, 145),
+	Ash         = Color3.fromRGB( 68,  66,  62),
+	-- UI chrome
+	Wire        = Color3.fromRGB( 24,  24,  30),
+	WireGold    = Color3.fromRGB( 75,  58,  18),
+	ActiveKnob  = Color3.fromRGB(210, 175, 100),
+	InactiveKnob= Color3.fromRGB( 42,  42,  48),
+	-- Status
+	GreenDim    = Color3.fromRGB( 12,  40,  16),
+	GreenBright = Color3.fromRGB( 68, 200,  88),
+	RedDim      = Color3.fromRGB( 40,  12,  12),
+	RedBright   = Color3.fromRGB(200,  68,  68),
+	BlueDim     = Color3.fromRGB( 12,  24,  50),
+	BlueBright  = Color3.fromRGB( 88, 145, 220),
+	-- Respawn
+	CyanDim     = Color3.fromRGB( 10,  38,  48),
+	CyanBright  = Color3.fromRGB( 72, 200, 220),
+	CyanLine    = Color3.fromRGB( 18,  60,  72),
+}
+
+-- ══════════════════════════════════════════════════════════════════
+--  TWEEN HELPERS
+-- ══════════════════════════════════════════════════════════════════
+local TI_FAST = TweenInfo.new(0.14, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TI_MED  = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+local function tw(obj, props, ti)
+	TweenService:Create(obj, ti or TI_FAST, props):Play()
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  UI UTILITY
+-- ══════════════════════════════════════════════════════════════════
+local function corner(p, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r or 6)
+	c.Parent = p
+	return c
+end
+
+local function stroke(p, col, thick)
+	local s = Instance.new("UIStroke")
+	s.Color           = col   or C.Wire
+	s.Thickness       = thick or 1
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent          = p
+	return s
+end
+
+local function pad(p, t, b, l, r)
+	local u = Instance.new("UIPadding")
+	u.PaddingTop    = UDim.new(0, t or 0)
+	u.PaddingBottom = UDim.new(0, b or 0)
+	u.PaddingLeft   = UDim.new(0, l or 0)
+	u.PaddingRight  = UDim.new(0, r or 0)
+	u.Parent        = p
+end
+
+local function divider(parent, order)
+	local f = Instance.new("Frame")
+	f.Size             = UDim2.new(1, 0, 0, 1)
+	f.BackgroundColor3 = C.Wire
+	f.BorderSizePixel  = 0
+	f.LayoutOrder      = order or 0
+	f.Parent           = parent
+	return f
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  SECTION HEADER  (cleaner, wider line)
+-- ══════════════════════════════════════════════════════════════════
+local function sectionHead(parent, txt, order)
+	local wrap = Instance.new("Frame")
+	wrap.Size                   = UDim2.new(1, 0, 0, 24)
+	wrap.BackgroundTransparency = 1
+	wrap.LayoutOrder            = order
+	wrap.Parent                 = parent
+
+	-- left gold bar
+	local bar = Instance.new("Frame")
+	bar.Size             = UDim2.new(0, 3, 0, 14)
+	bar.Position         = UDim2.new(0, 0, 0.5, -7)
+	bar.BackgroundColor3 = C.Gold
+	bar.BorderSizePixel  = 0
+	bar.Parent           = wrap
+	corner(bar, 1)
+
+	local sl = Instance.new("TextLabel")
+	sl.BackgroundTransparency = 1
+	sl.Size           = UDim2.new(1, -10, 1, 0)
+	sl.Position       = UDim2.new(0, 10, 0, 0)
+	sl.Text           = txt:upper()
+	sl.TextColor3     = C.Gold
+	sl.TextSize       = 10
+	sl.Font           = Enum.Font.GothamBold
+	sl.TextXAlignment = Enum.TextXAlignment.Left
+	sl.LetterSpacing  = 3
+	sl.Parent         = wrap
+
+	return wrap
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  TOGGLE ROW
+-- ══════════════════════════════════════════════════════════════════
+local function makeToggleRow(parent, labelText, order)
+	local row = Instance.new("Frame")
+	row.Size             = UDim2.new(1, 0, 0, 46)
+	row.BackgroundColor3 = C.Slate
+	row.BorderSizePixel  = 0
+	row.LayoutOrder      = order or 0
+	row.Parent           = parent
+	corner(row, 8)
+	local rowStroke = stroke(row, C.Wire)
+
+	local pip = Instance.new("Frame")
+	pip.Size             = UDim2.new(0, 3, 0, 24)
+	pip.Position         = UDim2.new(0, 0, 0.5, -12)
+	pip.BackgroundColor3 = C.Ash
+	pip.BorderSizePixel  = 0
+	pip.Parent           = row
+	corner(pip, 2)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.Size           = UDim2.new(1, -96, 1, 0)
+	lbl.Position       = UDim2.new(0, 16, 0, 0)
+	lbl.Text           = labelText
+	lbl.TextColor3     = C.Champagne
+	lbl.TextSize       = 13
+	lbl.Font           = Enum.Font.GothamBold
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent         = row
+
+	local statusLbl = Instance.new("TextLabel")
+	statusLbl.BackgroundTransparency = 1
+	statusLbl.Size           = UDim2.new(0, 28, 0, 14)
+	statusLbl.Position       = UDim2.new(1, -100, 0.5, -7)
+	statusLbl.Text           = "OFF"
+	statusLbl.TextColor3     = C.Ash
+	statusLbl.TextSize       = 9
+	statusLbl.Font           = Enum.Font.GothamBold
+	statusLbl.TextXAlignment = Enum.TextXAlignment.Right
+	statusLbl.Parent         = row
+
+	local track = Instance.new("Frame")
+	track.Size             = UDim2.new(0, 46, 0, 24)
+	track.Position         = UDim2.new(1, -58, 0.5, -12)
+	track.BackgroundColor3 = C.Charcoal
+	track.BorderSizePixel  = 0
+	track.Parent           = row
+	corner(track, 12)
+	local trackStroke = stroke(track, C.Wire)
+
+	local knob = Instance.new("Frame")
+	knob.Size             = UDim2.new(0, 18, 0, 18)
+	knob.Position         = UDim2.new(0, 3, 0.5, -9)
+	knob.BackgroundColor3 = C.InactiveKnob
+	knob.BorderSizePixel  = 0
+	knob.Parent           = track
+	corner(knob, 9)
+
+	local btn = Instance.new("TextButton")
+	btn.Size                   = UDim2.new(1, 0, 1, 0)
+	btn.BackgroundTransparency = 1
+	btn.Text                   = ""
+	btn.Parent                 = row
+
+	local function refresh(on)
+		if on then
+			tw(track,      { BackgroundColor3 = C.GoldDim   })
+			tw(trackStroke,{ Color            = C.WireGold  })
+			tw(knob,       { Position = UDim2.new(0, 25, 0.5, -9), BackgroundColor3 = C.Gold })
+			tw(rowStroke,  { Color            = C.GoldLine  })
+			tw(pip,        { BackgroundColor3 = C.Gold      })
+			tw(lbl,        { TextColor3       = C.Ivory     })
+			tw(statusLbl,  { TextColor3       = C.GoldBright})
+			statusLbl.Text = "ON"
+		else
+			tw(track,      { BackgroundColor3 = C.Charcoal  })
+			tw(trackStroke,{ Color            = C.Wire      })
+			tw(knob,       { Position = UDim2.new(0, 3, 0.5, -9), BackgroundColor3 = C.InactiveKnob })
+			tw(rowStroke,  { Color            = C.Wire      })
+			tw(pip,        { BackgroundColor3 = C.Ash       })
+			tw(lbl,        { TextColor3       = C.Champagne })
+			tw(statusLbl,  { TextColor3       = C.Ash       })
+			statusLbl.Text = "OFF"
+		end
+	end
+
+	btn.MouseEnter:Connect(function()  tw(row, { BackgroundColor3 = C.SlateHover }) end)
+	btn.MouseLeave:Connect(function()  tw(row, { BackgroundColor3 = C.Slate      }) end)
+
+	return { button = btn, refresh = refresh, row = row }
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  SQUARE BUTTON
+-- ══════════════════════════════════════════════════════════════════
+local function makeSquareBtn(parent, txt)
+	local b = Instance.new("TextButton")
+	b.Size             = UDim2.new(0, 30, 0, 30)
+	b.BackgroundColor3 = C.Charcoal
+	b.Text             = txt
+	b.TextColor3       = C.Champagne
+	b.TextSize         = 17
+	b.Font             = Enum.Font.GothamBold
+	b.BorderSizePixel  = 0
+	b.Parent           = parent
+	corner(b, 6)
+	stroke(b, C.Wire)
+	b.MouseEnter:Connect(function()   tw(b, { BackgroundColor3 = C.GoldDim,  TextColor3 = C.GoldBright }) end)
+	b.MouseLeave:Connect(function()   tw(b, { BackgroundColor3 = C.Charcoal, TextColor3 = C.Champagne  }) end)
+	b.MouseButton1Down:Connect(function() tw(b, { BackgroundColor3 = C.Gold, TextColor3 = C.Void }) end)
+	b.MouseButton1Up:Connect(function()   tw(b, { BackgroundColor3 = C.GoldDim, TextColor3 = C.GoldBright }) end)
+	return b
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  ACTION BUTTON  (full-width)
+-- ══════════════════════════════════════════════════════════════════
+local function makeActionBtn(parent, txt, order, theme)
+	theme = theme or "gold"
+	local bg, fg, brd
+	if theme == "green" then
+		bg = C.GreenDim; fg = C.GreenBright; brd = Color3.fromRGB(22, 65, 26)
+	elseif theme == "cyan" then
+		bg = C.CyanDim; fg = C.CyanBright; brd = C.CyanLine
+	elseif theme == "red" then
+		bg = C.RedDim; fg = C.RedBright; brd = Color3.fromRGB(65, 18, 18)
+	else
+		bg = C.GoldDim; fg = C.GoldBright; brd = C.GoldLine
+	end
+
+	local b = Instance.new("TextButton")
+	b.Size             = UDim2.new(1, 0, 0, 34)
+	b.BackgroundColor3 = bg
+	b.Text             = txt
+	b.TextColor3       = fg
+	b.TextSize         = 12
+	b.Font             = Enum.Font.GothamBold
+	b.BorderSizePixel  = 0
+	b.LayoutOrder      = order or 0
+	b.Parent           = parent
+	corner(b, 7)
+	stroke(b, brd)
+
+	b.MouseEnter:Connect(function()   tw(b, { BackgroundColor3 = fg,          TextColor3 = C.Void }) end)
+	b.MouseLeave:Connect(function()   tw(b, { BackgroundColor3 = bg,          TextColor3 = fg     }) end)
+	b.MouseButton1Down:Connect(function() tw(b, { BackgroundColor3 = fg,      TextColor3 = C.Void }) end)
+	b.MouseButton1Up:Connect(function()   tw(b, { BackgroundColor3 = bg,      TextColor3 = fg     }) end)
+	return b
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  PANEL FACTORY
+-- ══════════════════════════════════════════════════════════════════
+local function makePanel(title, subtitle, w, h, posFunc)
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name           = "TF_" .. title:gsub("%s","")
+	screenGui.ResetOnSpawn   = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.Parent         = playerGui
+
+	local panel = Instance.new("Frame")
+	panel.Name             = "Panel"
+	panel.Size             = UDim2.new(0, w, 0, h)
+	panel.Position         = posFunc(w, h)
+	panel.BackgroundColor3 = C.Abyss
+	panel.BorderSizePixel  = 0
+	panel.ClipsDescendants = true
+	panel.Parent           = screenGui
+	corner(panel, 12)
+	stroke(panel, C.Wire, 1)
+
+	-- top gold accent line
+	local topAccent = Instance.new("Frame")
+	topAccent.Size             = UDim2.new(1, 0, 0, 2)
+	topAccent.BackgroundColor3 = C.Gold
+	topAccent.BorderSizePixel  = 0
+	topAccent.ZIndex           = 6
+	topAccent.Parent           = panel
+
+	-- header
+	local header = Instance.new("Frame")
+	header.Size             = UDim2.new(1, 0, 0, 58)
+	header.Position         = UDim2.new(0, 0, 0, 2)
+	header.BackgroundColor3 = C.Obsidian
+	header.BorderSizePixel  = 0
+	header.ZIndex           = 2
+	header.Parent           = panel
+
+	-- subtle diagonal lines in header
+	for _, xs in ipairs({0, 0.3, 0.6, 0.9}) do
+		local f = Instance.new("Frame")
+		f.Size                   = UDim2.new(0, 1, 0, 150)
+		f.Position               = UDim2.new(xs, 0, 0, -40)
+		f.BackgroundColor3       = C.Gold
+		f.BackgroundTransparency = 0.93
+		f.BorderSizePixel        = 0
+		f.Rotation               = 26
+		f.ZIndex                 = 3
+		f.Parent                 = header
+	end
+
+	-- title
+	local wm = Instance.new("TextLabel")
+	wm.BackgroundTransparency = 1
+	wm.Size           = UDim2.new(0, 200, 0, 24)
+	wm.Position       = UDim2.new(0, 16, 0, 8)
+	wm.Text           = "TRAPVERSE"
+	wm.TextColor3     = C.Ivory
+	wm.TextSize       = 19
+	wm.Font           = Enum.Font.GothamBold
+	wm.TextXAlignment = Enum.TextXAlignment.Left
+	wm.ZIndex         = 4
+	wm.Parent         = header
+
+	local sw = Instance.new("TextLabel")
+	sw.BackgroundTransparency = 1
+	sw.Size           = UDim2.new(0, 200, 0, 14)
+	sw.Position       = UDim2.new(0, 16, 0, 36)
+	sw.Text           = subtitle
+	sw.TextColor3     = C.Gold
+	sw.TextSize       = 9
+	sw.Font           = Enum.Font.GothamBold
+	sw.LetterSpacing  = 4
+	sw.TextXAlignment = Enum.TextXAlignment.Left
+	sw.ZIndex         = 4
+	sw.Parent         = header
+
+	-- TF signet badge
+	local signet = Instance.new("Frame")
+	signet.Size             = UDim2.new(0, 32, 0, 32)
+	signet.Position         = UDim2.new(1, -80, 0.5, -16)
+	signet.BackgroundColor3 = C.GoldDim
+	signet.BorderSizePixel  = 0
+	signet.ZIndex           = 4
+	signet.Parent           = header
+	corner(signet, 5)
+	stroke(signet, C.Gold)
+	local sg = Instance.new("TextLabel")
+	sg.BackgroundTransparency = 1
+	sg.Size           = UDim2.new(1,0,1,0)
+	sg.Text           = "TF"
+	sg.TextColor3     = C.Gold
+	sg.TextSize       = 11
+	sg.Font           = Enum.Font.GothamBold
+	sg.TextXAlignment = Enum.TextXAlignment.Center
+	sg.ZIndex         = 5
+	sg.Parent         = signet
+
+	-- minimize button
+	local minBtn = Instance.new("TextButton")
+	minBtn.Size             = UDim2.new(0, 26, 0, 26)
+	minBtn.Position         = UDim2.new(1, -38, 0.5, -13)
+	minBtn.BackgroundColor3 = C.Slate
+	minBtn.Text             = "−"
+	minBtn.TextColor3       = C.Champagne
+	minBtn.TextSize         = 17
+	minBtn.Font             = Enum.Font.GothamBold
+	minBtn.BorderSizePixel  = 0
+	minBtn.ZIndex           = 5
+	minBtn.Parent           = header
+	corner(minBtn, 5)
+	stroke(minBtn, C.Wire)
+	minBtn.MouseEnter:Connect(function() tw(minBtn, {BackgroundColor3=C.GoldDim, TextColor3=C.Gold}) end)
+	minBtn.MouseLeave:Connect(function() tw(minBtn, {BackgroundColor3=C.Slate,   TextColor3=C.Champagne}) end)
+
+	-- header separator
+	local hLine = Instance.new("Frame")
+	hLine.Size             = UDim2.new(1, 0, 0, 1)
+	hLine.Position         = UDim2.new(0, 0, 0, 60)
+	hLine.BackgroundColor3 = C.GoldLine
+	hLine.BorderSizePixel  = 0
+	hLine.ZIndex           = 2
+	hLine.Parent           = panel
+
+	-- scrolling body
+	local body = Instance.new("ScrollingFrame")
+	body.Size                = UDim2.new(1, 0, 1, -61)
+	body.Position            = UDim2.new(0, 0, 0, 61)
+	body.BackgroundTransparency = 1
+	body.BorderSizePixel     = 0
+	body.ScrollBarThickness  = 2
+	body.ScrollBarImageColor3= C.Gold
+	body.CanvasSize          = UDim2.new(0, 0, 0, 0)
+	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	body.Parent              = panel
+
+	local ll = Instance.new("UIListLayout")
+	ll.FillDirection = Enum.FillDirection.Vertical
+	ll.SortOrder     = Enum.SortOrder.LayoutOrder
+	ll.Padding       = UDim.new(0, 6)
+	ll.Parent        = body
+	pad(body, 14, 16, 12, 12)
+
+	-- minimize logic
+	local minimized = false
+	minBtn.MouseButton1Click:Connect(function()
+		minimized = not minimized
+		if minimized then
+			body.Visible  = false
+			hLine.Visible = false
+			tw(panel, { Size = UDim2.new(0, w, 0, 60) }, TI_MED)
+			minBtn.Text = "+"
+		else
+			tw(panel, { Size = UDim2.new(0, w, 0, h) }, TI_MED)
+			task.delay(0.2, function()
+				body.Visible  = true
+				hLine.Visible = true
+			end)
+			minBtn.Text = "−"
+		end
+	end)
+
+	-- drag logic
+	local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+	header.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging  = true
+			dragStart = input.Position
+			startPos  = panel.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	header.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and input == dragInput then
+			local d = input.Position - dragStart
+			panel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+				startPos.Y.Scale, startPos.Y.Offset + d.Y)
+		end
+	end)
+
+	return { panel = panel, body = body, screenGui = screenGui }
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  TEXT INPUT CARD
+-- ══════════════════════════════════════════════════════════════════
+local function makeInputCard(parent, labelTxt, placeholderTxt, order)
+	local card = Instance.new("Frame")
+	card.Size             = UDim2.new(1, 0, 0, 66)
+	card.BackgroundColor3 = C.Slate
+	card.BorderSizePixel  = 0
+	card.LayoutOrder      = order or 0
+	card.Parent           = parent
+	corner(card, 8)
+	stroke(card, C.Wire)
+
+	local pip = Instance.new("Frame")
+	pip.Size             = UDim2.new(0, 3, 0, 24)
+	pip.Position         = UDim2.new(0, 0, 0.5, -12)
+	pip.BackgroundColor3 = C.Ash
+	pip.BorderSizePixel  = 0
+	pip.Parent           = card
+	corner(pip, 2)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.Size           = UDim2.new(1, -18, 0, 16)
+	lbl.Position       = UDim2.new(0, 16, 0, 7)
+	lbl.Text           = labelTxt
+	lbl.TextColor3     = C.Champagne
+	lbl.TextSize       = 10
+	lbl.Font           = Enum.Font.GothamBold
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent         = card
+
+	local box = Instance.new("TextBox")
+	box.Size              = UDim2.new(1, -18, 0, 29)
+	box.Position          = UDim2.new(0, 9, 0, 28)
+	box.BackgroundColor3  = C.Charcoal
+	box.BorderSizePixel   = 0
+	box.Text              = ""
+	box.PlaceholderText   = placeholderTxt or ""
+	box.TextColor3        = C.Ivory
+	box.PlaceholderColor3 = C.Ash
+	box.TextSize          = 12
+	box.Font              = Enum.Font.Gotham
+	box.ClearTextOnFocus  = false
+	box.Parent            = card
+	corner(box, 6)
+	stroke(box, C.Wire)
+	pad(box, 0, 0, 8, 8)
+
+	return card, box
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  STATUS LABEL
+-- ══════════════════════════════════════════════════════════════════
+local function makeStatusLabel(parent, order)
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.Size           = UDim2.new(1, 0, 0, 22)
+	lbl.LayoutOrder    = order or 0
+	lbl.Text           = ""
+	lbl.TextColor3     = C.Champagne
+	lbl.TextSize       = 10
+	lbl.Font           = Enum.Font.GothamBold
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextWrapped    = true
+	lbl.Parent         = parent
+	return lbl
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  VALUE CARD  (label + badge + −/+ buttons)
+-- ══════════════════════════════════════════════════════════════════
+local function makeValueCard(parent, labelTxt, defaultVal, order)
+	local card = Instance.new("Frame")
+	card.Size             = UDim2.new(1, 0, 0, 46)
+	card.BackgroundColor3 = C.Slate
+	card.BorderSizePixel  = 0
+	card.LayoutOrder      = order or 0
+	card.Parent           = parent
+	corner(card, 8)
+	stroke(card, C.Wire)
+
+	local pip = Instance.new("Frame")
+	pip.Size             = UDim2.new(0, 3, 0, 24)
+	pip.Position         = UDim2.new(0, 0, 0.5, -12)
+	pip.BackgroundColor3 = C.Ash
+	pip.BorderSizePixel  = 0
+	pip.Parent           = card
+	corner(pip, 2)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.Size           = UDim2.new(0, 90, 1, 0)
+	lbl.Position       = UDim2.new(0, 16, 0, 0)
+	lbl.Text           = labelTxt
+	lbl.TextColor3     = C.Champagne
+	lbl.TextSize       = 13
+	lbl.Font           = Enum.Font.GothamBold
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent         = card
+
+	local badge = Instance.new("Frame")
+	badge.Size             = UDim2.new(0, 52, 0, 28)
+	badge.Position         = UDim2.new(0.5, -26, 0.5, -14)
+	badge.BackgroundColor3 = C.GoldDim
+	badge.BorderSizePixel  = 0
+	badge.Parent           = card
+	corner(badge, 6)
+	stroke(badge, C.GoldLine)
+
+	local val = Instance.new("TextLabel")
+	val.BackgroundTransparency = 1
+	val.Size           = UDim2.new(1, 0, 1, 0)
+	val.Text           = tostring(defaultVal)
+	val.TextColor3     = C.GoldBright
+	val.TextSize       = 15
+	val.Font           = Enum.Font.GothamBold
+	val.TextXAlignment = Enum.TextXAlignment.Center
+	val.Parent         = badge
+
+	local minusBtn = makeSquareBtn(card, "−")
+	minusBtn.Position = UDim2.new(1, -80, 0.5, -15)
+	local plusBtn  = makeSquareBtn(card, "+")
+	plusBtn.Position  = UDim2.new(1, -46, 0.5, -15)
+
+	return { card=card, val=val, minusBtn=minusBtn, plusBtn=plusBtn }
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--  BUILD PANEL 1 — FLYER
+-- ══════════════════════════════════════════════════════════════════
+local PW, PH = 312, 720
+local p1 = makePanel("Flyer", "F L Y E R", PW, PH, function(w, h)
+	return UDim2.new(0.5, -w - 10, 0.5, -h/2)
+end)
+local body1 = p1.body
+
+-- ─── MOVEMENT ────────────────────────────────────────────────────
+sectionHead(body1, "Movement", 10)
+local flyToggle  = makeToggleRow(body1, "Fly Mode", 20)
+local speedVC    = makeValueCard(body1, "Fly Speed", flySpeed, 30)
+
+divider(body1, 33)
+
+local walkToggle = makeToggleRow(body1, "Walk Speed", 36)
+
+local wpCard = Instance.new("Frame")
+wpCard.Size             = UDim2.new(1, 0, 0, 52)
+wpCard.BackgroundColor3 = C.Slate
+wpCard.BorderSizePixel  = 0
+wpCard.LayoutOrder      = 37
+wpCard.Parent           = body1
+corner(wpCard, 8)
+stroke(wpCard, C.Wire)
+
+local wpPip = Instance.new("Frame")
+wpPip.Size             = UDim2.new(0, 3, 0, 24)
+wpPip.Position         = UDim2.new(0, 0, 0.5, -12)
+wpPip.BackgroundColor3 = C.Ash
+wpPip.BorderSizePixel  = 0
+wpPip.Parent           = wpCard
+corner(wpPip, 2)
+
+local wpLbl = Instance.new("TextLabel")
+wpLbl.BackgroundTransparency = 1
+wpLbl.Size           = UDim2.new(1, -18, 0, 15)
+wpLbl.Position       = UDim2.new(0, 16, 0, 6)
+wpLbl.Text           = "Walk Preset"
+wpLbl.TextColor3     = C.Champagne
+wpLbl.TextSize       = 10
+wpLbl.Font           = Enum.Font.GothamBold
+wpLbl.TextXAlignment = Enum.TextXAlignment.Left
+wpLbl.Parent         = wpCard
+
+local presetRow = Instance.new("Frame")
+presetRow.Size                   = UDim2.new(1, -18, 0, 24)
+presetRow.Position               = UDim2.new(0, 9, 0, 24)
+presetRow.BackgroundTransparency = 1
+presetRow.Parent                 = wpCard
+
+local prl = Instance.new("UIListLayout")
+prl.FillDirection = Enum.FillDirection.Horizontal
+prl.SortOrder     = Enum.SortOrder.LayoutOrder
+prl.Padding       = UDim.new(0, 4)
+prl.Parent        = presetRow
+
+local presetBtns = {}
+local function setWalkPreset(idx)
+	currentWalkPreset = idx
+	runSpeed = WALK_PRESETS[idx].speed
+	for i, b in ipairs(presetBtns) do
+		if i == idx then tw(b, {BackgroundColor3=C.Gold, TextColor3=C.Void})
+		else              tw(b, {BackgroundColor3=C.Charcoal, TextColor3=C.Champagne}) end
+	end
+	if walkEnabled then
+		updateCharacterReferences()
+		if humanoid then humanoid.WalkSpeed = runSpeed end
+	end
+end
+
+for i, preset in ipairs(WALK_PRESETS) do
+	local b = Instance.new("TextButton")
+	b.Size             = UDim2.new(0, 84, 1, 0)
+	b.BackgroundColor3 = i == currentWalkPreset and C.Gold or C.Charcoal
+	b.Text             = preset.label .. "  (" .. preset.speed .. ")"
+	b.TextColor3       = i == currentWalkPreset and C.Void or C.Champagne
+	b.TextSize         = 10
+	b.Font             = Enum.Font.GothamBold
+	b.BorderSizePixel  = 0
+	b.LayoutOrder      = i
+	b.Parent           = presetRow
+	corner(b, 5)
+	stroke(b, C.Wire)
+	presetBtns[i] = b
+	b.MouseButton1Click:Connect(function() setWalkPreset(i) end)
+	b.MouseEnter:Connect(function()
+		if currentWalkPreset ~= i then tw(b, {BackgroundColor3=C.GoldDim, TextColor3=C.GoldBright}) end
+	end)
+	b.MouseLeave:Connect(function()
+		if currentWalkPreset ~= i then tw(b, {BackgroundColor3=C.Charcoal, TextColor3=C.Champagne}) end
+	end)
+end
+
+local jumpVC = makeValueCard(body1, "Jump Power", jumpPower, 38)
+
+-- ─── UTILITIES ────────────────────────────────────────────────────
+divider(body1, 44)
+sectionHead(body1, "Utilities", 48)
+local tagsToggle   = makeToggleRow(body1, "Player Tags",   50)
+local jumpToggle   = makeToggleRow(body1, "Infinite Jump", 60)
+local noclipToggle = makeToggleRow(body1, "Noclip",        70)
+
+-- ─── RESPAWN ──────────────────────────────────────────────────────
+divider(body1, 73)
+sectionHead(body1, "Character", 75)
+
+local respawnBtn = makeActionBtn(body1, "⟳   RESPAWN CHARACTER", 76, "cyan")
+respawnBtn.MouseButton1Click:Connect(function()
+	-- Stop all active features before respawn to avoid ghost connections
+	if flying then
+		if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
+		if bodyVelocity  then bodyVelocity:Destroy();    bodyVelocity  = nil end
+		if bodyGyro      then bodyGyro:Destroy();        bodyGyro      = nil end
+		flying = false
+		flyToggle.refresh(false)
+	end
+	if clickTpConnection then
+		clickTpConnection:Disconnect()
+		clickTpConnection = nil
+		clickTpEnabled = false
+		clickTpToggle.refresh(false)
+	end
+	player:LoadCharacter()
+end)
+
+-- ─── ANIMATION SWITCHER ──────────────────────────────────────────
+divider(body1, 77)
+sectionHead(body1, "Animation Pack", 78)
+
+local ANIM_PACKS = {
+	{ label = "Zombie",    key = "Zombie",    icon = "🧟" },
+	{ label = "Ninja",     key = "Ninja",     icon = "🥷" },
+	{ label = "Levitate",  key = "Levitation",icon = "🧙" },
+	{ label = "Pirate",    key = "Pirate",    icon = "🏴‍☠️" },
+	{ label = "Superhero", key = "Superhero", icon = "🦸" },
+	{ label = "Vampire",   key = "Vampire",   icon = "🧛" },
+	{ label = "Knight",    key = "Knight",    icon = "⚔️" },
+	{ label = "Werewolf",  key = "Werewolf",  icon = "🐺" },
+}
+
+local ANIM_IDS = {
+	Zombie     = { Walk=619537468,  Run=619536621,  Jump=619536283,  Fall=619535616,  Idle=619535834,  Swim=619537096,  Climb=619535091  },
+	Ninja      = { Walk=658831143,  Run=658830056,  Jump=658832070,  Fall=658831500,  Idle=658832408,  Swim=658832807,  Climb=658833139  },
+	Levitation = { Walk=619544080,  Run=619543231,  Jump=619542888,  Fall=619541867,  Idle=619542203,  Swim=619543721,  Climb=619541458  },
+	Pirate     = { Walk=837023892,  Run=837023444,  Jump=837024350,  Fall=837024147,  Idle=837024662,  Swim=837025054,  Climb=837025325  },
+	Superhero  = { Walk=619529601,  Run=619528716,  Jump=619528412,  Fall=619527817,  Idle=619528125,  Swim=619529095,  Climb=619527470  },
+	Vampire    = { Walk=1113741192, Run=1113740510, Jump=1113742359, Fall=1113742092, Idle=1113742618, Swim=1113742944, Climb=1113743239 },
+	Knight     = { Walk=734326330,  Run=734325948,  Jump=734326930,  Fall=734326679,  Idle=734327140,  Swim=734327363,  Climb=734329002  },
+	Werewolf   = { Walk=1113751657, Run=1113750642, Jump=1113752285, Fall=1113751889, Idle=1113752682, Swim=1113752975, Climb=1113754738 },
+}
+
+local animStatus = makeStatusLabel(body1, 79)
+
+local animGridCard = Instance.new("Frame")
+animGridCard.Size             = UDim2.new(1, 0, 0, 100)
+animGridCard.BackgroundColor3 = C.Slate
+animGridCard.BorderSizePixel  = 0
+animGridCard.LayoutOrder      = 80
+animGridCard.Parent           = body1
+corner(animGridCard, 8)
+stroke(animGridCard, C.Wire)
+pad(animGridCard, 6, 6, 6, 6)
+
+local animGrid = Instance.new("UIGridLayout")
+animGrid.CellSize    = UDim2.new(0.5, -4, 0, 38)
+animGrid.CellPadding = UDim2.new(0, 4, 0, 4)
+animGrid.Parent      = animGridCard
+
+local activeAnimBtn = nil
+
+-- ════════════════════════════════════════════════════════════════
+--  FIXED applyAnimPack
+--  Problem was: Disabled = true/false on the Animate LocalScript
+--  does NOT reliably force a reload from a LocalScript executor.
+--  FIX: Clone the Animate script, destroy the original, re-parent
+--       the clone — same trick Roblox uses internally.
+-- ════════════════════════════════════════════════════════════════
+local function applyAnimPack(packKey, btn)
+	updateCharacterReferences()
+
+	if not humanoid or not character then
+		animStatus.Text = "✗ Character not ready."
+		animStatus.TextColor3 = C.RedBright
+		return
+	end
+
+	-- Support both R6 and R15 (same slot names work for R6 too)
+	local ids = ANIM_IDS[packKey]
+	if not ids then return end
+
+	local animateScript = character:FindFirstChild("Animate")
+	if not animateScript then
+		animStatus.Text = "✗ Animate script not found."
+		animStatus.TextColor3 = C.RedBright
+		return
+	end
+
+	-- Clone BEFORE modifying so originals are intact if it fails
+	local animClone = animateScript:Clone()
+
+	local function applyToSlot(slotName, animId)
+		local slot = animClone:FindFirstChild(slotName)
+		if not slot then return end
+		-- Walk and Idle slots have multiple Animation children with weights;
+		-- update ALL of them so the random picker also gets the new ID.
+		for _, obj in ipairs(slot:GetDescendants()) do
+			if obj:IsA("Animation") then
+				obj.AnimationId = "rbxassetid://" .. tostring(animId)
+			end
+		end
+	end
+
+	local success, err = pcall(function()
+		applyToSlot("walk",     ids.Walk)
+		applyToSlot("run",      ids.Run)
+		applyToSlot("jump",     ids.Jump)
+		applyToSlot("fall",     ids.Fall)
+		applyToSlot("swim",     ids.Swim)
+		applyToSlot("swimidle", ids.Swim)
+		applyToSlot("climb",    ids.Climb)
+		applyToSlot("idle",     ids.Idle)
+		-- Some games also have toolnone / toolslash etc, leave untouched
+	end)
+
+	if not success then
+		animStatus.Text = "✗ Error: " .. tostring(err)
+		animStatus.TextColor3 = C.RedBright
+		animClone:Destroy()
+		return
+	end
+
+	-- Swap: destroy original, parent clone (this forces the Animate
+	-- LocalScript to restart and pick up new animation IDs immediately)
+	animateScript:Destroy()
+	animClone.Disabled = false
+	animClone.Parent   = character
+
+	-- Nudge the humanoid so it enters a new state and plays the anim
+	task.wait(0.05)
+	if humanoid and humanoid.Parent then
+		humanoid:ChangeState(Enum.HumanoidStateType.Running)
+	end
+
+	animStatus.Text       = "✔ " .. packKey .. " applied!"
+	animStatus.TextColor3 = C.GreenBright
+
+	-- Update button highlights
+	if activeAnimBtn and activeAnimBtn ~= btn then
+		tw(activeAnimBtn, { BackgroundColor3 = C.Charcoal, TextColor3 = C.Champagne })
+	end
+	activeAnimBtn = btn
+	tw(btn, { BackgroundColor3 = C.Gold, TextColor3 = C.Void })
+end
+
+-- Build the animation grid buttons
+for _, pack in ipairs(ANIM_PACKS) do
+	local b = Instance.new("TextButton")
+	b.Size             = UDim2.new(0, 1, 0, 1)  -- UIGridLayout controls actual size
+	b.BackgroundColor3 = C.Charcoal
+	b.Text             = pack.icon .. " " .. pack.label
+	b.TextColor3       = C.Champagne
+	b.TextSize         = 11
+	b.Font             = Enum.Font.GothamBold
+	b.BorderSizePixel  = 0
+	b.Parent           = animGridCard
+	corner(b, 6)
+	stroke(b, C.Wire)
+	local packKey = pack.key
+	b.MouseEnter:Connect(function()
+		if activeAnimBtn ~= b then tw(b, { BackgroundColor3 = C.GoldDim, TextColor3 = C.GoldBright }) end
+	end)
+	b.MouseLeave:Connect(function()
+		if activeAnimBtn ~= b then tw(b, { BackgroundColor3 = C.Charcoal, TextColor3 = C.Champagne }) end
+	end)
+	b.MouseButton1Click:Connect(function() applyAnimPack(packKey, b) end)
+end
+
+-- Reset animations button
+local resetAnimBtn = makeActionBtn(body1, "↺   RESET DEFAULT ANIMATIONS", 82)
+resetAnimBtn.MouseButton1Click:Connect(function()
+	updateCharacterReferences()
+	if not character then return end
+
+	local animateScript = character:FindFirstChild("Animate")
+	if not animateScript then
+		animStatus.Text = "✗ Animate script not found."
+		animStatus.TextColor3 = C.RedBright
+		return
+	end
+
+	local animClone = animateScript:Clone()
+
+	-- R15 default Roblox animation IDs
+	local defaults = {
+		walk     = "rbxassetid://507777826",
+		run      = "rbxassetid://507767714",
+		jump     = "rbxassetid://507765000",
+		fall     = "rbxassetid://507767968",
+		idle     = "rbxassetid://507766388",
+		swim     = "rbxassetid://507784897",
+		swimidle = "rbxassetid://507784897",
+		climb    = "rbxassetid://507765644",
+	}
+
+	pcall(function()
+		for slotName, animId in pairs(defaults) do
+			local slot = animClone:FindFirstChild(slotName)
+			if slot then
+				for _, obj in ipairs(slot:GetDescendants()) do
+					if obj:IsA("Animation") then
+						obj.AnimationId = animId
+					end
+				end
+			end
+		end
+	end)
+
+	animateScript:Destroy()
+	animClone.Disabled = false
+	animClone.Parent   = character
+
+	task.wait(0.05)
+	if humanoid and humanoid.Parent then
+		humanoid:ChangeState(Enum.HumanoidStateType.Running)
+	end
+
+	if activeAnimBtn then
+		tw(activeAnimBtn, { BackgroundColor3 = C.Charcoal, TextColor3 = C.Champagne })
+		activeAnimBtn = nil
+	end
+	animStatus.Text       = "✔ Reset to default animations."
+	animStatus.TextColor3 = C.Champagne
+end)
+
+-- ─── FOOTER ───────────────────────────────────────────────────────
+local footerCard = Instance.new("Frame")
+footerCard.Size             = UDim2.new(1, 0, 0, 28)
+footerCard.BackgroundColor3 = C.Void
+footerCard.BorderSizePixel  = 0
+footerCard.LayoutOrder      = 90
+footerCard.Parent           = body1
+corner(footerCard, 6)
+stroke(footerCard, C.Wire)
+
+local footerTxt = Instance.new("TextLabel")
+footerTxt.BackgroundTransparency = 1
+footerTxt.Size           = UDim2.new(1, 0, 1, 0)
+footerTxt.Text           = "WASD · Space ↑ · Shift ↓  —  Harvey Specter Ed."
+footerTxt.TextColor3     = C.Ash
+footerTxt.TextSize       = 9
+footerTxt.Font           = Enum.Font.GothamBold
+footerTxt.TextXAlignment = Enum.TextXAlignment.Center
+footerTxt.Parent         = footerCard
+
+-- ══════════════════════════════════════════════════════════════════
+--  BUILD PANEL 2 — TOOLS
+-- ══════════════════════════════════════════════════════════════════
+local TP_W, TP_H = 312, 390
+local p2 = makePanel("Tools", "T O O L S", TP_W, TP_H, function(w, h)
+	return UDim2.new(0.5, 10, 0.5, -h/2)
+end)
+local body2 = p2.body
+
+-- ─── TELEPORT ─────────────────────────────────────────────────────
+sectionHead(body2, "Teleport", 10)
+local clickTpToggle = makeToggleRow(body2, "Click to Teleport", 20)
+
+local tpHint = Instance.new("Frame")
+tpHint.Size             = UDim2.new(1, 0, 0, 30)
+tpHint.BackgroundColor3 = C.Charcoal
+tpHint.BorderSizePixel  = 0
+tpHint.LayoutOrder      = 25
+tpHint.Parent           = body2
+corner(tpHint, 7)
+stroke(tpHint, C.Wire)
+local tpHintLbl = Instance.new("TextLabel")
+tpHintLbl.BackgroundTransparency = 1
+tpHintLbl.Size           = UDim2.new(1, -14, 1, 0)
+tpHintLbl.Position       = UDim2.new(0, 7, 0, 0)
+tpHintLbl.Text           = "⚡ Click any surface in the world to teleport"
+tpHintLbl.TextColor3     = C.Ash
+tpHintLbl.TextSize       = 10
+tpHintLbl.Font           = Enum.Font.GothamBold
+tpHintLbl.TextXAlignment = Enum.TextXAlignment.Left
+tpHintLbl.TextWrapped    = true
+tpHintLbl.Parent         = tpHint
+
+-- ─── SEARCH PLAYER ────────────────────────────────────────────────
+divider(body2, 28)
+sectionHead(body2, "Search Player", 30)
+
+local srchInputCard, srchInput = makeInputCard(body2, "Player Username (partial ok)", "Type username…", 40)
+local srchBtn    = makeActionBtn(body2, "⌕   SEARCH PLAYER", 42)
+local srchStatus = makeStatusLabel(body2, 44)
+local tpToBtn    = makeActionBtn(body2, "⚡   TELEPORT TO PLAYER", 46, "green")
+tpToBtn.Visible  = false
+
+local copyFromSearchBtn = makeActionBtn(body2, "✔   PLAYER FOUND", 47)
+copyFromSearchBtn.Visible = false
+
+-- ══════════════════════════════════════════════════════════════════
+--  FLY LOGIC
+-- ══════════════════════════════════════════════════════════════════
+local function stopFlying()
+	flying = false
+	flyToggle.refresh(false)
+	if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
+	if bodyVelocity  then bodyVelocity:Destroy();    bodyVelocity  = nil end
+	if bodyGyro      then bodyGyro:Destroy();        bodyGyro      = nil end
+end
+
+local function startFlying()
+	updateCharacterReferences()
+	if not humanoid or not rootPart then return end
+	flying = true
+	flyToggle.refresh(true)
+
+	bodyVelocity = Instance.new("BodyVelocity")
+	bodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+	bodyVelocity.Velocity = Vector3.zero
+	bodyVelocity.Parent   = rootPart
+
+	bodyGyro = Instance.new("BodyGyro")
+	bodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+	bodyGyro.P         = 10000
+	bodyGyro.CFrame    = rootPart.CFrame
+	bodyGyro.Parent    = rootPart
+
+	flyConnection = RunService.RenderStepped:Connect(function()
+		updateCharacterReferences()
+		if not flying or not rootPart or not camera then stopFlying(); return end
+
+		local dir = Vector3.zero
+		if keys.W     then dir += camera.CFrame.LookVector  end
+		if keys.S     then dir -= camera.CFrame.LookVector  end
+		if keys.A     then dir -= camera.CFrame.RightVector end
+		if keys.D     then dir += camera.CFrame.RightVector end
+		if keys.Space then dir += Vector3.new(0, 1, 0)      end
+		if keys.Shift then dir -= Vector3.new(0, 1, 0)      end
+
+		if dir.Magnitude > 0 then dir = dir.Unit end
+		bodyVelocity.Velocity = dir * flySpeed
+		bodyGyro.CFrame       = camera.CFrame
+	end)
+end
+
+flyToggle.button.MouseButton1Click:Connect(function()
+	if flying then stopFlying() else startFlying() end
+end)
+
+speedVC.plusBtn.MouseButton1Click:Connect(function()
+	flySpeed = math.min(flySpeed + 10, 500)
+	speedVC.val.Text = tostring(flySpeed)
+end)
+speedVC.minusBtn.MouseButton1Click:Connect(function()
+	flySpeed = math.max(flySpeed - 10, 10)
+	speedVC.val.Text = tostring(flySpeed)
+end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  WALK / JUMP LOGIC
+-- ══════════════════════════════════════════════════════════════════
+local DEFAULT_WALK = 16
+local DEFAULT_JUMP = 50
+
+local function setWalk(state)
+	walkEnabled = state
+	walkToggle.refresh(state)
+	updateCharacterReferences()
+	if state then
+		if humanoid then humanoid.WalkSpeed = runSpeed end
+	else
+		if not flying and humanoid then humanoid.WalkSpeed = DEFAULT_WALK end
+	end
+end
+walkToggle.button.MouseButton1Click:Connect(function() setWalk(not walkEnabled) end)
+
+local function applyJump()
+	updateCharacterReferences()
+	if humanoid then humanoid.JumpPower = jumpPower end
+end
+
+jumpVC.plusBtn.MouseButton1Click:Connect(function()
+	jumpPower = math.min(jumpPower + 1, 500)
+	jumpVC.val.Text = tostring(jumpPower)
+	applyJump()
+end)
+jumpVC.minusBtn.MouseButton1Click:Connect(function()
+	jumpPower = math.max(jumpPower - 1, 8)
+	jumpVC.val.Text = tostring(jumpPower)
+	applyJump()
+end)
+
+player.CharacterAdded:Connect(function(char)
+	task.wait(0.5)
+	local hum = char:WaitForChild("Humanoid")
+	if walkEnabled then hum.WalkSpeed = runSpeed end
+	hum.JumpPower = jumpPower
+end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  PLAYER TAGS
+-- ══════════════════════════════════════════════════════════════════
+local function removeTag(tp)
+	local d = trackedTags[tp]
+	if d and d.billboard then d.billboard:Destroy() end
+	trackedTags[tp] = nil
+end
+
+local function createTag(tp, tc)
+	if tp == player or not tc then return end
+	local head = tc:FindFirstChild("Head")
+	local hrp  = tc:FindFirstChild("HumanoidRootPart")
+	local hum  = tc:FindFirstChildOfClass("Humanoid")
+	if not head or not hrp or not hum then return end
+	removeTag(tp)
+
+	local bb = Instance.new("BillboardGui")
+	bb.Size        = UDim2.new(0, 124, 0, 38)
+	bb.StudsOffset = Vector3.new(0, 4.5, 0)
+	bb.AlwaysOnTop = true
+	bb.MaxDistance = 220
+	bb.Adornee     = head
+	bb.Parent      = playerGui
+
+	local bg = Instance.new("Frame")
+	bg.Size                   = UDim2.new(1, 0, 1, 0)
+	bg.BackgroundColor3       = C.Obsidian
+	bg.BackgroundTransparency = 0.05
+	bg.BorderSizePixel        = 0
+	bg.Parent                 = bb
+	corner(bg, 7)
+	stroke(bg, C.GoldLine)
+
+	local bar = Instance.new("Frame")
+	bar.Size             = UDim2.new(0, 3, 0, 26)
+	bar.Position         = UDim2.new(0, 4, 0.5, -13)
+	bar.BackgroundColor3 = C.Gold
+	bar.BorderSizePixel  = 0
+	bar.Parent           = bg
+	corner(bar, 1)
+
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.BackgroundTransparency = 1
+	nameLbl.Size           = UDim2.new(1, -14, 0.55, 0)
+	nameLbl.Position       = UDim2.new(0, 12, 0, 0)
+	nameLbl.Text           = tp.DisplayName
+	nameLbl.TextColor3     = C.Ivory
+	nameLbl.TextSize       = 11
+	nameLbl.Font           = Enum.Font.GothamBold
+	nameLbl.TextWrapped    = true
+	nameLbl.Parent         = bg
+
+	local distLbl = Instance.new("TextLabel")
+	distLbl.BackgroundTransparency = 1
+	distLbl.Size           = UDim2.new(1, -14, 0.45, 0)
+	distLbl.Position       = UDim2.new(0, 12, 0.55, 0)
+	distLbl.Text           = "0 studs"
+	distLbl.TextColor3     = C.Gold
+	distLbl.TextSize       = 9
+	distLbl.Font           = Enum.Font.GothamBold
+	distLbl.Parent         = bg
+
+	trackedTags[tp] = { character = tc, billboard = bb, distanceLabel = distLbl }
+end
+
+local function setTagsEnabled(state)
+	tagsEnabled = state
+	tagsToggle.refresh(state)
+	if not state then
+		for tp in pairs(trackedTags) do removeTag(tp) end
+	else
+		for _, op in ipairs(Players:GetPlayers()) do
+			if op ~= player and op.Character then createTag(op, op.Character) end
+		end
+	end
+end
+tagsToggle.button.MouseButton1Click:Connect(function() setTagsEnabled(not tagsEnabled) end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  INFINITE JUMP
+-- ══════════════════════════════════════════════════════════════════
+local function setInfiniteJump(state)
+	infiniteJumpEnabled = state
+	jumpToggle.refresh(state)
+end
+jumpToggle.button.MouseButton1Click:Connect(function() setInfiniteJump(not infiniteJumpEnabled) end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  NOCLIP
+-- ══════════════════════════════════════════════════════════════════
+local function setNoclip(state)
+	noclipEnabled = state
+	noclipToggle.refresh(state)
+end
+noclipToggle.button.MouseButton1Click:Connect(function() setNoclip(not noclipEnabled) end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  CLICK TELEPORT
+-- ══════════════════════════════════════════════════════════════════
+local function setClickTp(state)
+	clickTpEnabled = state
+	clickTpToggle.refresh(state)
+	if clickTpConnection then clickTpConnection:Disconnect(); clickTpConnection = nil end
+	if state then
+		clickTpConnection = mouse.Button1Down:Connect(function()
+			if mouse.Target == nil then return end
+			updateCharacterReferences()
+			if not rootPart then return end
+			rootPart.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
+		end)
+	end
+end
+clickTpToggle.button.MouseButton1Click:Connect(function() setClickTp(not clickTpEnabled) end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  SEARCH PLAYER + TELEPORT
+-- ══════════════════════════════════════════════════════════════════
+local foundTargetPlayer = nil
+
+local function setSearchResult(msg, col, showTp, showCopy)
+	srchStatus.Text       = msg
+	srchStatus.TextColor3 = col or C.Champagne
+	tpToBtn.Visible       = showTp or false
+	copyFromSearchBtn.Visible = showCopy or false
+end
+
+srchBtn.MouseButton1Click:Connect(function()
+	local query = srchInput.Text:match("^%s*(.-)%s*$"):lower()
+	if query == "" then
+		setSearchResult("⚠ Enter a username to search.", C.Gold, false, false)
+		return
+	end
+	foundTargetPlayer = nil
+	setSearchResult("Searching…", C.Champagne, false, false)
+
+	local found = nil
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Name:lower() == query or p.DisplayName:lower() == query then
+			found = p; break
+		end
+	end
+	if not found then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Name:lower():find(query,1,true) or p.DisplayName:lower():find(query,1,true) then
+				found = p; break
+			end
+		end
+	end
+
+	if found then
+		foundTargetPlayer = found
+		local disp = found.DisplayName
+		if found.DisplayName ~= found.Name then
+			disp = found.DisplayName .. " (@" .. found.Name .. ")"
+		end
+		setSearchResult("✔ Found: " .. disp, C.GreenBright, true, true)
+		tpToBtn.Text = "⚡  TELEPORT TO  " .. found.DisplayName:upper()
+		copyFromSearchBtn.Text = "⧉  COPY  " .. found.DisplayName:upper() .. "'S AVATAR"
+	else
+		setSearchResult("✗ Not in server: " .. query, C.RedBright, false, false)
+	end
+end)
+
+tpToBtn.MouseButton1Click:Connect(function()
+	if not foundTargetPlayer then return end
+	updateCharacterReferences()
+	if not rootPart then return end
+	local tc = foundTargetPlayer.Character
+	if not tc then setSearchResult("✗ Player has no character.", C.RedBright, false, false); return end
+	local tRoot = tc:FindFirstChild("HumanoidRootPart")
+	if not tRoot then setSearchResult("✗ Cannot find player position.", C.RedBright, false, false); return end
+	rootPart.CFrame = tRoot.CFrame * CFrame.new(3, 0, 0)
+	setSearchResult("✔ Teleported to " .. foundTargetPlayer.DisplayName .. "!", C.GreenBright, true, true)
+end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  PLAYER EVENTS
+-- ══════════════════════════════════════════════════════════════════
+for _, op in ipairs(Players:GetPlayers()) do
+	if op ~= player then
+		op.CharacterAdded:Connect(function(c)
+			task.wait(0.2)
+			if tagsEnabled then createTag(op, c) end
+		end)
+		op.CharacterRemoving:Connect(function() removeTag(op) end)
+	end
+end
+
+Players.PlayerAdded:Connect(function(op)
+	if op == player then return end
+	op.CharacterAdded:Connect(function(c)
+		task.wait(0.2)
+		if tagsEnabled then createTag(op, c) end
+	end)
+	op.CharacterRemoving:Connect(function() removeTag(op) end)
+end)
+
+Players.PlayerRemoving:Connect(function(op)
+	removeTag(op)
+	if foundTargetPlayer == op then
+		foundTargetPlayer = nil
+		setSearchResult("⚠ Player left the game.", C.Gold, false, false)
+	end
+end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  RENDER LOOP
+-- ══════════════════════════════════════════════════════════════════
+RunService.RenderStepped:Connect(function()
+	updateCharacterReferences()
+
+	if noclipEnabled and character then
+		for _, p in ipairs(character:GetDescendants()) do
+			if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+		end
+	end
+
+	if tagsEnabled and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+		local myRoot = player.Character.HumanoidRootPart
+		for tp, data in pairs(trackedTags) do
+			local tc = tp.Character
+			if not tc or not tc.Parent then
+				removeTag(tp)
+			else
+				local tHRP  = tc:FindFirstChild("HumanoidRootPart")
+				local tHead = tc:FindFirstChild("Head")
+				local tHum  = tc:FindFirstChildOfClass("Humanoid")
+				if not tHRP or not tHead or not tHum or tHum.Health <= 0 then
+					removeTag(tp)
+				else
+					local dist = (tHRP.Position - myRoot.Position).Magnitude
+					data.distanceLabel.Text = showDistance and (math.floor(dist) .. " studs") or ""
+					local _, onScreen = camera:WorldToViewportPoint(tHead.Position)
+					data.billboard.Enabled = onScreen and dist <= 220
+				end
+			end
+		end
+	end
+end)
+
+-- ══════════════════════════════════════════════════════════════════
+--  INPUT
+-- ══════════════════════════════════════════════════════════════════
+UserInputService.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode == Enum.KeyCode.W     then keys.W     = true  end
+	if input.KeyCode == Enum.KeyCode.A     then keys.A     = true  end
+	if input.KeyCode == Enum.KeyCode.S     then keys.S     = true  end
+	if input.KeyCode == Enum.KeyCode.D     then keys.D     = true  end
+	if input.KeyCode == Enum.KeyCode.Space then
+		keys.Space = true
+		if infiniteJumpEnabled and humanoid then
+			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+		end
+	end
+	if input.KeyCode == Enum.KeyCode.LeftShift
+	or input.KeyCode == Enum.KeyCode.RightShift then
+		keys.Shift = true
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.W     then keys.W     = false end
+	if input.KeyCode == Enum.KeyCode.A     then keys.A     = false end
+	if input.KeyCode == Enum.KeyCode.S     then keys.S     = false end
+	if input.KeyCode == Enum.KeyCode.D     then keys.D     = false end
+	if input.KeyCode == Enum.KeyCode.Space then keys.Space = false end
+	if input.KeyCode == Enum.KeyCode.LeftShift
+	or input.KeyCode == Enum.KeyCode.RightShift then
+		keys.Shift = false
+	end
+end)
